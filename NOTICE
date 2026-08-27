@@ -1,0 +1,8 @@
+This repository contains measurement scripts and results produced on a private
+DGX Spark cluster. It builds on a third-party day-0 deployment recipe:
+
+- tonyd2wild/Qwen3.8-Flash-Next-NVFP4-DGX-Spark (locked serve flags, KV ladder, agent-safety stack)
+
+Model weights are NOT included; fetch them from the Hugging Face repos listed
+in the README. No model weights, datasets, or proprietary artifacts are
+distributed here.
