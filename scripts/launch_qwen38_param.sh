@@ -6,15 +6,18 @@
 #   QWEN_MEMFRAC  mem-fraction-static (default 0.80)
 #   QWEN_STEPS    speculative-num-steps (default 3)
 #   QWEN_DRAFT    speculative-num-draft-tokens (default 4)
-#   QWEN_KVTOK    max-total-tokens (default 600000)
+#   QWEN_KVTOK    max-total-tokens (default 600000; "auto" = omit, pool sized by memfrac)
+#   QWEN_KVDTYPE  "" (bf16 default) | nvfp4 | fp8_e4m3 — kv-cache-dtype (MiaAI-Lab NVFP4 KV image)
 set -euo pipefail
 NODE_RANK="${1:?usage: launch_qwen38_param.sh <0|1>}"
 QWEN_MEMFRAC="${QWEN_MEMFRAC:-0.80}"
 QWEN_STEPS="${QWEN_STEPS:-3}"
 QWEN_DRAFT="${QWEN_DRAFT:-4}"
 QWEN_KVTOK="${QWEN_KVTOK:-600000}"
+QWEN_KVDTYPE="${QWEN_KVDTYPE:-}"
 
 IMAGE="sglang-qwen38fn:sm121-qsa"
+[[ -n "$QWEN_KVDTYPE" ]] && IMAGE="sglang-qwen38fn:sm121-nvfp4kv"
 NAME="sglang_qwen38"
 MODEL_PATH="/models/qwen3.8-flash-next-nvfp4"
 CACHE_HOST_PATH="/var/tmp/qwen38-sglang-cache"
@@ -30,6 +33,10 @@ esac
 test -f "$MODEL_HOST_PATH/config.json" || { echo "missing $MODEL_HOST_PATH/config.json" >&2; exit 3; }
 mkdir -p "$CACHE_HOST_PATH"
 docker rm -f "$NAME" 2>/dev/null || true
+
+KV_ARGS=(--context-length 262144)
+[[ "$QWEN_KVTOK" != "auto" ]] && KV_ARGS+=(--max-total-tokens "$QWEN_KVTOK")
+[[ -n "$QWEN_KVDTYPE" ]] && KV_ARGS+=(--kv-cache-dtype "$QWEN_KVDTYPE")
 
 docker run --gpus all -d \
   --name "$NAME" --restart no \
@@ -66,7 +73,7 @@ docker run --gpus all -d \
     --speculative-eagle-topk 1 --speculative-num-draft-tokens "$QWEN_DRAFT" \
     --enable-linear-replayssm-spec \
     --chunked-prefill-size 4096 --max-running-requests 6 \
-    --context-length 262144 --max-total-tokens "$QWEN_KVTOK" \
+    "${KV_ARGS[@]}" \
     --mem-fraction-static "$QWEN_MEMFRAC" \
     --allow-auto-truncate --ple-offload-embedding \
     --cuda-graph-max-bs 8 --disable-cuda-graph-padding \

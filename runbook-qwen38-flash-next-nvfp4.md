@@ -75,6 +75,15 @@ Code content decodes ~33% faster than prose (NEXTN acceptance is content-driven 
 
 Qwen3.8-Flash-Next on 2 nodes beats GLM-5.3-Flash on 4 nodes in every cell (SGLang CUDA graphs + NEXTN vs vLLM enforce-eager + MTP; Qwen's smaller active-param footprint). GLM counters with the larger KV pool (1.29M fp8 tokens at TP4 vs 600K bf16) and 262K-per-request headroom.
 
+## Variant: NVFP4 KV cache (capacity serving, report 03)
+
+Packed-FP4 KV (FP4 values + per-block FP8 scales, MiaAI-Lab kernel design ported to SM121) multiplies the pool 4.83×: **2,895,680 tokens** at memfrac 0.80 vs 600K bf16. Measured trade: −2…−17% short-form aggregate, ~18% long-context decode tax (14 vs 17 tok/s), `max_running_requests=6`. Use it only when the working set exceeds 600K tokens (≥3 concurrent 260K-context requests, or long contexts + real concurrency); keep the bf16 winner config for interactive serving.
+
+1. Build the variant image over `sglang-qwen38fn:sm121-qsa`: `scripts/nvfp4-kv-port/` holds the Dockerfile + 7-patch chain (`apply_nvfp4_patches.py`, `qsa_nvfp4_kv.py`, `qsa_fa_fallback.py`). All patches are inert unless `--kv-cache-dtype nvfp4` is set. Ship to both ranks.
+2. Launch with `QWEN_KVDTYPE=nvfp4 QWEN_KVTOK=auto` — the token cap MUST be `auto` (pool sizes from memfrac; the bf16 600K pin would defeat the point).
+3. Verify from boot logs: `KV Cache is allocated. dtype: torch.float4_e2m1fn_x2, #tokens: 2895680` and residual `available_gpu_mem ≈ 21 GB`.
+4. Long-context budgeting: prefill runs ~2.1–2.5K tok/s aggregate (QSA indexer + FP4 pack) — a 260K prompt costs ~2 min solo, ~12 min with six queued. Decode at long context is ~14 tok/s per stream on this variant (and ~17 on bf16 — the collapse is stack-wide, not FP4-specific).
+
 ## Troubleshooting (symptom → cause → fix)
 
 - Warmup dies `MLIRError: coord and shape weakly congruent` → SIGQUIT → QSA guard: the FlashInfer TRT-LLM sparse-decode kernel is gated behind `is_sm100_supported()`; SM121 falls back to the FA4 CUTE path which dies. One-line fix in `qwen_sparse_attn_backend.py`: `if not (is_sm100_supported() or is_sm120_supported()): return None` (import `is_sm120_supported` from `sglang.srt.utils`), then delete the stale `__pycache__/qwen_sparse_attn_backend.cpython-312.pyc`.
@@ -83,6 +92,9 @@ Qwen3.8-Flash-Next on 2 nodes beats GLM-5.3-Flash on 4 nodes in every cell (SGLa
 - Token-0 `!` loop in agent/tool sessions → keep thinking-off + radix-off + pytorch-sampling stack and temp ≤0.7.
 - Rare multimodal-rope device assert under CUDA graphs (~1/90 min, source report) → `--disable-cuda-graph` fallback (~55 peak, vision preserved).
 - Boot dies silently / KV allocation fails → GB10 NVRM allocates from MemFree only; run the cache-flusher sidecar, drop_caches before launch, keep the 600K pin (the 1.05M-token 0.82 config OOMs under load).
+- NVFP4-KV variant: first prefill crashes `AttributeError: 'NoneType' object has no attribute 'shape'` in `_forward_trtllm_sparse` → the trtllm-gen sparse decode path reads BF16 pool views, which are `None` for FP4 pools. The port gates it (`if trtllm_decode is not None and fp4_kv is None:`) and routes FP4 through the FA2/Triton varlen path — if you rebuild the patch chain, keep the gate.
+- NVFP4-KV variant: `NameError: name 'NVP4_EOF' is not defined` at import → heredoc terminator leaked into a staged `.py` during patch staging. Grep staged files for stray `_EOF` lines before `docker build`.
+- NVFP4-KV variant: C8 aggregate drops ~17% vs bf16 → expected: the variant runs `max_running_requests=6`, so 2 of 8 streams queue. Not a regression to chase.
 - Gateway can't reach `<spark>:8000` over tailnet — bench on-box on the head (localhost).
 
 ## Credits
