@@ -49,4 +49,5 @@ results/                              raw JSONL/JSON for every completed arm
 
 - Model: Qwen/Qwen3.8-Flash-Next · Quant: [RadixArk/Qwen3.8-Flash-Next-NVFP4](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4)
 - Day-0 recipe: [tonyd2wild/Qwen3.8-Flash-Next-NVFP4-DGX-Spark](https://github.com/tonyd2wild/Qwen3.8-Flash-Next-NVFP4-DGX-Spark)
+- Same model on a **single** Spark (MiaAI-Lab vLLM recipe, verified 2026-09-06/07): [qwen3.8-flash-next-single-spark-miaai-verification](https://github.com/chishiki37/qwen3.8-flash-next-single-spark-miaai-verification) — ~35/101/142 tok/s C1/C4/C8; their 48.7 C1 claim lands at 70–76% here
 - Campaign: Vikas Sridhar's CRS812 DGX Spark cluster, measured 2026-08-27
